@@ -9,15 +9,28 @@ const knowledgeService = require('./services/knowledgeService');
 const pipelineService = require('./services/pipelineService');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const client = new Client({ 
-    authStrategy: new LocalAuth(), 
-    puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] } 
+const client = new Client({
+    authStrategy: new LocalAuth({ dataPath: process.env.WWEBJS_AUTH_PATH || '.wwebjs_auth' }),
+    puppeteer: {
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+    }
 });
 
 const bootTime = Math.floor(Date.now() / 1000);
 const msgLock = new Set(); 
 
-client.on('qr', qr => qrcode.generate(qr, { small: true }));
+client.on('qr', qr => {
+    // Render's log viewer garbles dense terminal ASCII QR art, so instead of
+    // relying on qrcode-terminal rendering correctly, print a link to a real
+    // scannable QR image. Open the link in any browser and scan it normally.
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qr)}`;
+    console.log('📱 SCAN THIS: open the link below in any browser, then scan the image with WhatsApp → Linked Devices → Link a Device');
+    console.log(qrImageUrl);
+    // Still print the terminal version too, in case it happens to render fine locally
+    qrcode.generate(qr, { small: true });
+});
 client.on('ready', () => console.log('🚀 SYSTEM LIVE - KANBAN STATUS SHIELD ACTIVE'));
 
 async function orchestrate(msg, isOutreach) {
