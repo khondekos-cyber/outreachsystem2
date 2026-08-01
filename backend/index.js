@@ -2,84 +2,43 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
+const express = require('express'); // ADD THIS
 require('dotenv').config();
 
-const decisionService = require('./services/decisionService');
-const knowledgeService = require('./services/knowledgeService');
-const pipelineService = require('./services/pipelineService');
+// 1. ADD A DUMMY SERVER FOR RENDER HEALTH CHECKS
+const app = express();
+const port = process.env.PORT || 10000;
+app.get('/', (req, res) => res.send('WhatsApp Engine is Running'));
+app.listen(port, '0.0.0.0', () => console.log(`Health check listening on port ${port}`));
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-
-const authPath = process.env.WWEBJS_AUTH_PATH || '.wwebjs_auth';
-
-// On a host like Render, a container getting killed/restarted often leaves
-// Chromium's lock files behind on the persistent disk from the previous run.
-// The next launch then refuses to start, thinking another process still owns
-// the profile, even though nothing actually does. Clear those before launch.
-function clearStaleChromeLocks(dir) {
-    if (!fs.existsSync(dir)) return;
-    const lockFileNames = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-            clearStaleChromeLocks(full);
-        } else if (lockFileNames.includes(entry.name)) {
-            try {
-                fs.unlinkSync(full);
-                console.log(`🧹 Removed stale Chromium lock: ${full}`);
-            } catch (e) {
-                console.warn(`⚠️ Could not remove stale lock ${full}:`, e.message);
-            }
-        }
-    }
-}
-clearStaleChromeLocks(authPath);
-
+// 2. UPDATED PUPPETEER SETTINGS FOR RENDER
 const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: authPath }),
+    authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
-            // Docker's default /dev/shm is only 64MB. Chromium uses it heavily,
-            // and running out of it crashes the render process with exactly the
-            // "Execution context was destroyed" error seen in these logs — this
-            // is unrelated to overall container RAM and needed regardless of plan.
             '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--disable-software-rasterizer'
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process',
+            '--disable-gpu'
         ],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        protocolTimeout: 120000
-    },
-    // Pins a known-stable WhatsApp Web version instead of auto-fetching
-    // whatever's current. Without this, a version mismatch between the
-    // fetched WA Web build and this Puppeteer/Chromium version causes a
-    // page reload right after QR scan, which crashes Client.inject with
-    // "Execution context was destroyed, most likely because of a navigation"
-    // — a known unresolved whatsapp-web.js issue, not a bug in this code.
-    webVersionCache: {
-        type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1023901613-alpha.html'
+        // Point this to where npx installed chrome in Step 1
+        executablePath: process.env.NODE_ENV === 'production' 
+            ? '/opt/render/.cache/puppeteer/chrome/linux-146.0.7680.31/chrome-linux64/chrome' 
+            : undefined
     }
 });
+
+// ... the rest of your code (bootTime, msgLock, orchestrate, etc.)
 
 const bootTime = Math.floor(Date.now() / 1000);
 const msgLock = new Set(); 
 
-client.on('qr', qr => {
-    // Render's log viewer garbles dense terminal ASCII QR art, so instead of
-    // relying on qrcode-terminal rendering correctly, print a link to a real
-    // scannable QR image. Open the link in any browser and scan it normally.
-    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qr)}`;
-    console.log('📱 SCAN THIS: open the link below in any browser, then scan the image with WhatsApp → Linked Devices → Link a Device');
-    console.log(qrImageUrl);
-    // Still print the terminal version too, in case it happens to render fine locally
-    qrcode.generate(qr, { small: true });
-});
+client.on('qr', qr => qrcode.generate(qr, { small: true }));
 client.on('ready', () => console.log('🚀 SYSTEM LIVE - KANBAN STATUS SHIELD ACTIVE'));
 
 async function orchestrate(msg, isOutreach) {
@@ -276,29 +235,4 @@ async function handleIncoming(m) {
 client.on('message', handleIncoming);
 client.on('message_create', handleIncoming);
 
-// This specific crash ("Execution context was destroyed, most likely because
-// of a navigation") is a known, long-standing bug in whatsapp-web.js itself —
-// it fires during the version-check step right as WhatsApp Web navigates from
-// the QR screen to the chat interface. The underlying login usually actually
-// succeeds; the library just mishandles this one timing race as fatal and lets
-// it crash the whole Node process instead of retrying. So: catch it here and
-// retry initialize automatically instead of dying.
-async function startClient() {
-    try {
-        await client.initialize();
-    } catch (err) {
-        console.error('❌ Client.initialize() failed:', err.message);
-        // Exit and let the host (Render) restart the whole container fresh.
-        // Retrying inside the same process risked leaving orphaned Chromium
-        // processes behind, compounding memory usage across attempts. A full
-        // container restart guarantees a clean slate every time.
-        process.exit(1);
-    }
-}
-
-process.on('uncaughtException', (err) => {
-    console.error('❌ UNCAUGHT EXCEPTION:', err.message);
-    process.exit(1);
-});
-
-startClient();
+client.initialize();
