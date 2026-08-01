@@ -1,7 +1,15 @@
+# Dependencies
 node_modules/
-.env
-.env.local
-.wwebjs_auth/
-.wwebjs_cache/
 .next/
 dist/
+
+# WhatsApp Session (CRITICAL: DO NOT UPLOAD)
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Environment Variables
+.env
+.env.local
+
+# Logs
+npm-debug.log*
