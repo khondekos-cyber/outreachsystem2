@@ -2,6 +2,8 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const decisionService = require('./services/decisionService');
@@ -9,8 +11,34 @@ const knowledgeService = require('./services/knowledgeService');
 const pipelineService = require('./services/pipelineService');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+const authPath = process.env.WWEBJS_AUTH_PATH || '.wwebjs_auth';
+
+// On a host like Render, a container getting killed/restarted often leaves
+// Chromium's lock files behind on the persistent disk from the previous run.
+// The next launch then refuses to start, thinking another process still owns
+// the profile, even though nothing actually does. Clear those before launch.
+function clearStaleChromeLocks(dir) {
+    if (!fs.existsSync(dir)) return;
+    const lockFileNames = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            clearStaleChromeLocks(full);
+        } else if (lockFileNames.includes(entry.name)) {
+            try {
+                fs.unlinkSync(full);
+                console.log(`🧹 Removed stale Chromium lock: ${full}`);
+            } catch (e) {
+                console.warn(`⚠️ Could not remove stale lock ${full}:`, e.message);
+            }
+        }
+    }
+}
+clearStaleChromeLocks(authPath);
+
 const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: process.env.WWEBJS_AUTH_PATH || '.wwebjs_auth' }),
+    authStrategy: new LocalAuth({ dataPath: authPath }),
     puppeteer: {
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
