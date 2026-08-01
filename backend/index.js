@@ -41,7 +41,17 @@ const client = new Client({
     authStrategy: new LocalAuth({ dataPath: authPath }),
     puppeteer: {
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            // Docker's default /dev/shm is only 64MB. Chromium uses it heavily,
+            // and running out of it crashes the render process with exactly the
+            // "Execution context was destroyed" error seen in these logs — this
+            // is unrelated to overall container RAM and needed regardless of plan.
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-software-rasterizer'
+        ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         protocolTimeout: 120000
     },
@@ -273,59 +283,22 @@ client.on('message_create', handleIncoming);
 // succeeds; the library just mishandles this one timing race as fatal and lets
 // it crash the whole Node process instead of retrying. So: catch it here and
 // retry initialize automatically instead of dying.
-let initAttempts = 0;
-const MAX_INIT_ATTEMPTS = 5;
-
 async function startClient() {
-    initAttempts++;
     try {
         await client.initialize();
     } catch (err) {
-        console.error(`❌ Client.initialize() failed (attempt ${initAttempts}/${MAX_INIT_ATTEMPTS}):`, err.message);
-
-        // The failed attempt can leave an orphaned Chromium process still
-        // holding the profile lock, which makes the retry fail with
-        // "browser is already running" even though nothing legitimate is
-        // using it. Clean that up before trying again.
-        try {
-            await client.destroy();
-        } catch (destroyErr) {
-            console.warn('⚠️ Error destroying client during retry cleanup (usually harmless):', destroyErr.message);
-        }
-        clearStaleChromeLocks(authPath);
-
-        if (initAttempts < MAX_INIT_ATTEMPTS) {
-            const delayMs = 5000 * initAttempts;
-            console.log(`🔁 Retrying initialize in ${delayMs / 1000}s...`);
-            setTimeout(startClient, delayMs);
-        } else {
-            console.error('❌ Max init attempts reached. Exiting so the host restarts the container fresh.');
-            process.exit(1);
-        }
+        console.error('❌ Client.initialize() failed:', err.message);
+        // Exit and let the host (Render) restart the whole container fresh.
+        // Retrying inside the same process risked leaving orphaned Chromium
+        // processes behind, compounding memory usage across attempts. A full
+        // container restart guarantees a clean slate every time.
+        process.exit(1);
     }
 }
 
-// Belt-and-suspenders: this exact bug throws asynchronously in a way that can
-// bypass the try/catch above and hit Node's uncaughtException handler instead.
-// Without this handler, that kills the whole process immediately.
-process.on('uncaughtException', async (err) => {
-    if (err.message?.includes('Execution context was destroyed')) {
-        console.error('⚠️ Caught known whatsapp-web.js navigation-timing crash — retrying instead of exiting:', err.message);
-        try {
-            await client.destroy();
-        } catch (destroyErr) {
-            console.warn('⚠️ Error destroying client during retry cleanup (usually harmless):', destroyErr.message);
-        }
-        clearStaleChromeLocks(authPath);
-        if (initAttempts < MAX_INIT_ATTEMPTS) {
-            setTimeout(startClient, 5000 * initAttempts);
-        } else {
-            process.exit(1);
-        }
-    } else {
-        console.error('❌ UNCAUGHT EXCEPTION:', err);
-        process.exit(1);
-    }
+process.on('uncaughtException', (err) => {
+    console.error('❌ UNCAUGHT EXCEPTION:', err.message);
+    process.exit(1);
 });
 
 startClient();
