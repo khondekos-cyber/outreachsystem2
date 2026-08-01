@@ -266,4 +266,48 @@ async function handleIncoming(m) {
 client.on('message', handleIncoming);
 client.on('message_create', handleIncoming);
 
-client.initialize();
+// This specific crash ("Execution context was destroyed, most likely because
+// of a navigation") is a known, long-standing bug in whatsapp-web.js itself —
+// it fires during the version-check step right as WhatsApp Web navigates from
+// the QR screen to the chat interface. The underlying login usually actually
+// succeeds; the library just mishandles this one timing race as fatal and lets
+// it crash the whole Node process instead of retrying. So: catch it here and
+// retry initialize automatically instead of dying.
+let initAttempts = 0;
+const MAX_INIT_ATTEMPTS = 5;
+
+async function startClient() {
+    initAttempts++;
+    try {
+        await client.initialize();
+    } catch (err) {
+        console.error(`❌ Client.initialize() failed (attempt ${initAttempts}/${MAX_INIT_ATTEMPTS}):`, err.message);
+        if (initAttempts < MAX_INIT_ATTEMPTS) {
+            const delayMs = 5000 * initAttempts;
+            console.log(`🔁 Retrying initialize in ${delayMs / 1000}s...`);
+            setTimeout(startClient, delayMs);
+        } else {
+            console.error('❌ Max init attempts reached. Exiting so the host restarts the container fresh.');
+            process.exit(1);
+        }
+    }
+}
+
+// Belt-and-suspenders: this exact bug throws asynchronously in a way that can
+// bypass the try/catch above and hit Node's uncaughtException handler instead.
+// Without this handler, that kills the whole process immediately.
+process.on('uncaughtException', (err) => {
+    if (err.message?.includes('Execution context was destroyed')) {
+        console.error('⚠️ Caught known whatsapp-web.js navigation-timing crash — retrying instead of exiting:', err.message);
+        if (initAttempts < MAX_INIT_ATTEMPTS) {
+            setTimeout(startClient, 5000 * initAttempts);
+        } else {
+            process.exit(1);
+        }
+    } else {
+        console.error('❌ UNCAUGHT EXCEPTION:', err);
+        process.exit(1);
+    }
+});
+
+startClient();
