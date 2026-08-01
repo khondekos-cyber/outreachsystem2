@@ -42,7 +42,18 @@ const client = new Client({
     puppeteer: {
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        protocolTimeout: 120000
+    },
+    // Pins a known-stable WhatsApp Web version instead of auto-fetching
+    // whatever's current. Without this, a version mismatch between the
+    // fetched WA Web build and this Puppeteer/Chromium version causes a
+    // page reload right after QR scan, which crashes Client.inject with
+    // "Execution context was destroyed, most likely because of a navigation"
+    // — a known unresolved whatsapp-web.js issue, not a bug in this code.
+    webVersionCache: {
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1023901613-alpha.html'
     }
 });
 
