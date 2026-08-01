@@ -1,17 +1,16 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
-const { createClient } = require('@supabase/supabase-js');
-const crypto = require('crypto');
-const express = require('express'); // ADD THIS
-require('dotenv').config();
-
-// 1. ADD A DUMMY SERVER FOR RENDER HEALTH CHECKS
+const path = require('path');
+const express = require('express');
 const app = express();
-const port = process.env.PORT || 10000;
-app.get('/', (req, res) => res.send('WhatsApp Engine is Running'));
-app.listen(port, '0.0.0.0', () => console.log(`Health check listening on port ${port}`));
 
-// 2. UPDATED PUPPETEER SETTINGS FOR RENDER
+// 1. HEALTH CHECK SERVER (Required for Render)
+const port = process.env.PORT || 10000;
+app.get('/', (req, res) => res.send('Engine Alive'));
+app.listen(port, '0.0.0.0', () => console.log(`Health check on port ${port}`));
+
+// 2. PATH FINDER FOR CHROME
+// This looks inside the .puppeteer folder we created in Step 1
+const chromePath = path.join(process.cwd(), '.puppeteer', 'chrome', 'linux-146.0.7680.31', 'chrome-linux64', 'chrome');
+
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
@@ -20,20 +19,12 @@ const client = new Client({
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process',
-            '--disable-gpu'
+            '--single-process'
         ],
-        // Point this to where npx installed chrome in Step 1
-        executablePath: process.env.NODE_ENV === 'production' 
-            ? '/opt/render/.cache/puppeteer/chrome/linux-146.0.7680.31/chrome-linux64/chrome' 
-            : undefined
+        // Point to the local project folder path
+        executablePath: process.env.NODE_ENV === 'production' ? chromePath : undefined
     }
 });
-
-// ... the rest of your code (bootTime, msgLock, orchestrate, etc.)
 
 const bootTime = Math.floor(Date.now() / 1000);
 const msgLock = new Set(); 
