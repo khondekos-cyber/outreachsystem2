@@ -1,0 +1,57 @@
+🚀 Agentic Sales CRM: The Fact-Bank Engine
+This system is a high-performance Automated Setter designed for trade businesses (Solar, Boreholes, etc.). Unlike standard chatbots, this is an Agentic Engine that uses a single "Decision Brain" to mine facts, update a Source of Truth (SSOT), and move leads through a sales pipeline based on business rules.
+🏗️ Technical Stack
+Frontend: Next.js (App Router), Tailwind CSS, Lucide Icons.
+Backend: Node.js, whatsapp-web.js (Stable Mode).
+Database: Supabase (PostgreSQL) with Realtime enabled.
+AI Brain: OpenAI GPT-4o (Structured JSON Output).
+🧠 Core Philosophy: The Fact-Bank CRM
+The CRM is the Single Source of Truth (SSOT).
+The CRM never "thinks": It only stores verified facts (Employees, CRM used, Meeting time).
+The AI is a Miner: Every message is an opportunity to extract a new fact and lock it into the CRM.
+Sequence Locking: The AI follows a strict sales protocol: Secure Demo Time FIRST 
+→
+→
+ Record Fact in CRM 
+→
+→
+ Drop Dog Groomer Success Video SECOND.
+📂 System Structure
+1. The Dashboard (/)
+The high-level overview of the entire business.
+Total Prospects: Aggregate count of every lead ever contacted.
+AI Agents Active: Count of leads currently being handled by the Decision Engine.
+Purpose: Provides the "Bird's Eye View" of lead volume and system health.
+2. The Action Pipeline (/pipeline)
+The central command center. Replicated exactly from the high-end demo.
+Needs Immediate Action (Red Banner): Automatically displays the top 4 "Hot Leads" (Lead Score > 90). Clicking a name opens their modal instantly.
+Stats Boxes: Real-time counters for AI Handling, Qualified Leads, and Demo Goal.
+The Kanban Board: 6 Columns (Outreach Sent, Replied, AI Qualifying, Interested / Demo, Booked / Won, Lost / Ghosted).
+Real-time Movement: Cards slide between columns automatically as the Backend updates the status field in Supabase.
+3. The Lead Intelligence Modal (Split View)
+When a card is clicked, this "Intelligence Center" opens. It is split into two distinct zones:
+Left: Intelligence Panel (The SSOT):
+Displays locked data: Industry, Region, and Follower Stats.
+Shows the Fact Memory: A dedicated section for "Mined Facts" (CRM, budget, staff size).
+Send Demo Video Button: A primary action button for the human agent.
+Right: Conversation History:
+A real-time WhatsApp thread showing every back-and-forth.
+Blue bubbles = You/Bot, White bubbles = Lead.
+Manual Override: An input box at the bottom allows a human to type a message, which is logged to the SSOT.
+⚙️ Backend Services (The Decision Engine)
+The backend is refactored into modular services to ensure stability and "Smart" behavior:
+decisionService.js (The Brain)
+Performs One AI Call that returns a massive JSON object including:
+reply: The high-energy, short sales message.
+intent: The detected goal (e.g., BOOKING_CONFIRMED).
+new_facts: New data discovered for the SSOT memory.
+video_trigger: A boolean that tells the system when to drop the Dog Groomer link.
+knowledgeService.js (The Bible)
+The only place where product facts exist. It stores:
+The Dog Groomer Video link.
+Pricing and Feature lists.
+Strict rules for the "Time -> Video" sequence.
+pipelineService.js (Business Rules)
+Maps the AI's detected Intent to the actual Kanban Columns. It uses a "Forward-Only" rule: a lead can move from "Replied" to "Interested," but it is blocked from moving backward to "Outreach Sent."
+eventService.js (The Audit Trail)
+Every time the AI makes a decision, it logs an entry into the events table. This allows you to see why a lead moved or why the AI thought an objection was raised.
