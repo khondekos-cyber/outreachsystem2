@@ -11,7 +11,7 @@ const decisionService = require('./services/decisionService');
 const knowledgeService = require('./services/knowledgeService');
 const pipelineService = require('./services/pipelineService');
 
-// --- 1. RENDER WEB SERVER (Prevents Timeout & Hosts QR) ---
+// --- 1. RENDER WEB SERVER (Increased refresh to 2 minutes) ---
 const app = express();
 const port = process.env.PORT || 10000;
 let latestQr = "";
@@ -27,28 +27,27 @@ app.get('/', (req, res) => {
                     <div style="background:white;padding:40px;border-radius:30px;box-shadow:0 10px 25px rgba(0,0,0,0.05);text-align:center;">
                         <h1 style="margin-bottom:20px;">Scan WhatsApp QR</h1>
                         <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(latestQr)}" />
-                        <p style="color:#64748b;margin-top:20px;">The page refreshes every 20s to show the latest code.</p>
+                        <p style="color:#64748b;margin-top:20px;">Page will wait 2 minutes before refreshing.</p>
                         <p>Status: <b>${clientStatus}</b></p>
                     </div>
-                    <script>setTimeout(() => location.reload(), 20000);</script>
+                    <script>setTimeout(() => location.reload(), 120000);</script>
                 </body>
             </html>
         `);
     } else {
-        res.send('<h1>Engine Starting...</h1><p>Wait 30s and refresh.</p><script>setTimeout(() => location.reload(), 5000);</script>');
+        res.send('<h1>Engine Starting...</h1><p>Wait 30s and refresh manually.</p>');
     }
 });
 
 app.listen(port, '0.0.0.0', () => console.log(`🚀 Web server live on port ${port}`));
 
-// --- 2. CHROMIUM LOCK FIX (Kills "Profile in use" error) ---
+// --- 2. CHROMIUM LOCK FIX ---
 const sessionPath = path.join(process.cwd(), '.wwebjs_auth', 'session', 'Default', 'SingletonLock');
 if (fs.existsSync(sessionPath)) {
     try {
         fs.unlinkSync(sessionPath);
-        console.log('🔓 Removed old Chromium lock file');
     } catch (e) {
-        console.error('⚠️ Could not remove lock file', e.message);
+        console.error('Lock file error', e.message);
     }
 }
 
@@ -61,13 +60,7 @@ const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--single-process',
-            '--no-zygote'
-        ],
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--single-process', '--no-zygote'],
         executablePath: process.env.NODE_ENV === 'production' ? chromePath : undefined
     }
 });
@@ -87,7 +80,7 @@ client.on('ready', () => {
     console.log('✅ AGENTIC ENGINE ONLINE');
 });
 
-// --- 4. SSOT LOGIC ---
+// --- 4. BUSINESS LOGIC ---
 async function orchestrate(msg, isOutreach) {
     if (msg.timestamp < bootTime || msg.from.includes('status') || msg.from.endsWith('@g.us')) return;
 
@@ -145,7 +138,7 @@ async function orchestrate(msg, isOutreach) {
                 const aiMsg = await msg.reply(decision.reply);
                 const aiMsgId = aiMsg?.id?.id || crypto.randomUUID();
                 await supabase.from('messages').insert({ id: aiMsgId, lead_id: lead.id, body: decision.reply, from_me: true });
-            } catch (sendErr) { console.error("❌ Send Fail", sendErr); }
+            } catch (sendErr) { console.error("❌ Send Fail"); }
         }
 
     } catch (e) { console.error("❌ Engine Fault", e.message); }
