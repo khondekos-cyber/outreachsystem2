@@ -11,7 +11,7 @@ const decisionService = require('./services/decisionService');
 const knowledgeService = require('./services/knowledgeService');
 const pipelineService = require('./services/pipelineService');
 
-// --- 1. RENDER WEB SERVER (Increased refresh to 2 minutes) ---
+// --- 1. RENDER WEB SERVER ---
 const app = express();
 const port = process.env.PORT || 10000;
 let latestQr = "";
@@ -19,54 +19,45 @@ let clientStatus = "Initializing...";
 
 app.get('/', (req, res) => {
     if (clientStatus === "READY") {
-        res.send('<h1>✅ Engine Online</h1><p>WhatsApp is connected and SSOT is active.</p>');
+        res.send('<h1>✅ Engine Online</h1><p>Connected to WhatsApp.</p>');
     } else if (latestQr) {
-        res.send(`
-            <html>
-                <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#f8fafc;font-family:sans-serif;">
-                    <div style="background:white;padding:40px;border-radius:30px;box-shadow:0 10px 25px rgba(0,0,0,0.05);text-align:center;">
-                        <h1 style="margin-bottom:20px;">Scan WhatsApp QR</h1>
-                        <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(latestQr)}" />
-                        <p style="color:#64748b;margin-top:20px;">Page will wait 2 minutes before refreshing.</p>
-                        <p>Status: <b>${clientStatus}</b></p>
-                    </div>
-                    <script>setTimeout(() => location.reload(), 120000);</script>
-                </body>
-            </html>
-        `);
+        res.send(`<html><body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#f8fafc;font-family:sans-serif;"><div style="background:white;padding:40px;border-radius:30px;box-shadow:0 10px 25px rgba(0,0,0,0.05);text-align:center;"><h1>Scan WhatsApp QR</h1><img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(latestQr)}" /><p>Refreshing every 2 minutes.</p><p>Status: <b>${clientStatus}</b></p></div><script>setTimeout(() => location.reload(), 120000);</script></body></html>`);
     } else {
-        res.send('<h1>Engine Starting...</h1><p>Wait 30s and refresh manually.</p>');
+        res.send('<h1>Engine Starting...</h1><p>Wait 30s and refresh.</p>');
     }
 });
 
-app.listen(port, '0.0.0.0', () => console.log(`🚀 Web server live on port ${port}`));
+app.listen(port, '0.0.0.0', () => console.log(`🚀 Port ${port} open.`));
 
 // --- 2. CHROMIUM LOCK FIX ---
 const sessionPath = path.join(process.cwd(), '.wwebjs_auth', 'session', 'Default', 'SingletonLock');
-if (fs.existsSync(sessionPath)) {
-    try {
-        fs.unlinkSync(sessionPath);
-    } catch (e) {
-        console.error('Lock file error', e.message);
-    }
-}
+if (fs.existsSync(sessionPath)) { try { fs.unlinkSync(sessionPath); } catch (e) {} }
 
 // --- 3. INITIALIZATION ---
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-
 const chromePath = path.join(process.cwd(), '.puppeteer', 'chrome', 'linux-146.0.7680.31', 'chrome-linux64', 'chrome');
 
 const client = new Client({
     authStrategy: new LocalAuth(),
+    webVersionCache: {
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+    },
     puppeteer: {
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--single-process', '--no-zygote'],
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--no-zygote',
+            '--single-process'
+        ],
+        // CRITICAL: Force a real User Agent to stop WhatsApp from kicking the bot
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         executablePath: process.env.NODE_ENV === 'production' ? chromePath : undefined
     }
 });
-
-const bootTime = Math.floor(Date.now() / 1000);
-const msgLock = new Set(); 
 
 client.on('qr', (qr) => {
     latestQr = qr;
@@ -82,7 +73,9 @@ client.on('ready', () => {
 
 // --- 4. BUSINESS LOGIC ---
 async function orchestrate(msg, isOutreach) {
-    if (msg.timestamp < bootTime || msg.from.includes('status') || msg.from.endsWith('@g.us')) return;
+    const bootTime = Math.floor(Date.now() / 1000);
+    const msgLock = new Set();
+    if (msg.timestamp < bootTime - 60 || msg.from.includes('status') || msg.from.endsWith('@g.us')) return;
 
     const phone = isOutreach ? msg.to : msg.from;
     const lockKey = `${msg.id.id}`; 
@@ -91,12 +84,7 @@ async function orchestrate(msg, isOutreach) {
 
     try {
         let { data: lead } = await supabase.from('leads').select('*').eq('phone', phone).maybeSingle();
-
-        if (!lead && !isOutreach) {
-            msgLock.delete(lockKey);
-            return;
-        }
-
+        if (!lead && !isOutreach) { msgLock.delete(lockKey); return; }
         if (!lead && isOutreach) {
             const { data: newLead } = await supabase.from('leads').insert({ phone, status: 'Outreach Sent' }).select().single();
             lead = newLead;
@@ -110,7 +98,7 @@ async function orchestrate(msg, isOutreach) {
 
         let nextStatus = lead.status;
         if (isOutreach) {
-            if (!lead.status || lead.status === 'Outreach Sent' || lead.status === 'Prospect') nextStatus = 'Outreach Sent';
+            if (!lead.status || lead.status === 'Outreach Sent') nextStatus = 'Outreach Sent';
         } else {
             nextStatus = pipelineService.calculateNextStatus(decision.intent, lead.status);
         }
@@ -120,37 +108,22 @@ async function orchestrate(msg, isOutreach) {
             industry: (lead.industry === 'Trade' || !lead.industry) ? (decision.extracted_identity?.industry || lead.industry) : lead.industry,
             location: (lead.location === 'Unknown' || !lead.location) ? (decision.extracted_identity?.location || lead.location) : lead.location,
             stat_info: (lead.stat_info === 'N/A' || !lead.stat_info) ? (decision.extracted_identity?.stats || lead.stat_info) : lead.stat_info,
-            sales_process: lead.sales_process || decision.new_facts?.sales_process || null,
-            memory: {
-                ...lead.memory,
-                ...Object.fromEntries(Object.entries(decision.new_facts || {}).filter(([, v]) => v !== null && v !== undefined && v !== ''))
-            },
+            memory: { ...lead.memory, ...decision.new_facts },
             conv_state: decision.updated_state,
             status: nextStatus,
-            lead_score: Math.max(lead.lead_score || 0, decision.lead_score || 0),
-            pain_points: decision.pain_points || lead.pain_points,
             last_message: msg.body,
             last_message_at: new Date().toISOString()
         }).eq('id', lead.id);
 
-        if (!isOutreach && lead.ai_active !== false && decision.reply && decision.reply !== "NONE") {
-            try {
-                const aiMsg = await msg.reply(decision.reply);
-                const aiMsgId = aiMsg?.id?.id || crypto.randomUUID();
-                await supabase.from('messages').insert({ id: aiMsgId, lead_id: lead.id, body: decision.reply, from_me: true });
-            } catch (sendErr) { console.error("❌ Send Fail"); }
+        if (!isOutreach && decision.reply && decision.reply !== "NONE") {
+            const aiMsg = await client.sendMessage(msg.from, decision.reply);
+            await supabase.from('messages').insert({ id: aiMsg.id.id, lead_id: lead.id, body: decision.reply, from_me: true });
         }
-
     } catch (e) { console.error("❌ Engine Fault", e.message); }
     setTimeout(() => msgLock.delete(lockKey), 10000);
 }
 
-async function handleIncoming(m) {
-    const isOutreach = m.id?.fromMe ?? m.fromMe;
-    await orchestrate(m, isOutreach);
-}
-
-client.on('message', handleIncoming);
-client.on('message_create', handleIncoming);
+client.on('message', async (m) => { if (!m.fromMe) await orchestrate(m, false); });
+client.on('message_create', async (m) => { if (m.fromMe) await orchestrate(m, true); });
 
 client.initialize();
