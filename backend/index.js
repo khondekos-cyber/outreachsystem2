@@ -29,18 +29,27 @@ app.get('/', (req, res) => {
 
 app.listen(port, '0.0.0.0', () => console.log(`🚀 Port ${port} open.`));
 
-// --- 2. CHROMIUM LOCK FIX ---
-const sessionPath = path.join(process.cwd(), '.wwebjs_auth', 'session', 'Default', 'SingletonLock');
-if (fs.existsSync(sessionPath)) { try { fs.unlinkSync(sessionPath); } catch (e) {} }
+// --- 2. CHROMIUM LOCK FIX (Optimized for Render Restarts) ---
+const sessionDir = path.join(process.cwd(), '.wwebjs_auth');
+const lockPath = path.join(sessionDir, 'session', 'Default', 'SingletonLock');
+if (fs.existsSync(lockPath)) { 
+    try { 
+        fs.unlinkSync(lockPath); 
+    } catch (e) {
+        console.log("🔒 SingletonLock busy or removed.");
+    } 
+}
 
-// --- 3. INITIALIZATION ---
+// --- 3. INITIALIZATION (Optimized for Render Buildpacks) ---
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const chromePath = path.join(process.cwd(), '.puppeteer', 'chrome', 'linux-146.0.7680.31', 'chrome-linux64', 'chrome');
 
+// Render Optimization: Removed hardcoded chromePath. 
+// Render uses its own Chromium path via the 'Puppeteer Buildpack'.
 const client = new Client({
     authStrategy: new LocalAuth(),
     webVersionCache: {
         type: 'remote',
+        // Stable GitHub raw link
         remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
     },
     puppeteer: {
@@ -53,9 +62,9 @@ const client = new Client({
             '--no-zygote',
             '--single-process'
         ],
-        // CRITICAL: Force a real User Agent to stop WhatsApp from kicking the bot
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        executablePath: process.env.NODE_ENV === 'production' ? chromePath : undefined
+        // Critical: Let Render provide the executable path automatically 
+        // to avoid "Executable not found" errors
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
 });
 
@@ -72,19 +81,22 @@ client.on('ready', () => {
 });
 
 // --- 4. BUSINESS LOGIC ---
+// Moved msgLock to global scope so it actually functions as a lock across messages
+const globalMsgLock = new Set();
+
 async function orchestrate(msg, isOutreach) {
     const bootTime = Math.floor(Date.now() / 1000);
-    const msgLock = new Set();
+    // Logic: Skip old messages or statuses/groups
     if (msg.timestamp < bootTime - 60 || msg.from.includes('status') || msg.from.endsWith('@g.us')) return;
 
     const phone = isOutreach ? msg.to : msg.from;
     const lockKey = `${msg.id.id}`; 
-    if (msgLock.has(lockKey)) return;
-    msgLock.add(lockKey);
+    if (globalMsgLock.has(lockKey)) return;
+    globalMsgLock.add(lockKey);
 
     try {
         let { data: lead } = await supabase.from('leads').select('*').eq('phone', phone).maybeSingle();
-        if (!lead && !isOutreach) { msgLock.delete(lockKey); return; }
+        if (!lead && !isOutreach) { globalMsgLock.delete(lockKey); return; }
         if (!lead && isOutreach) {
             const { data: newLead } = await supabase.from('leads').insert({ phone, status: 'Outreach Sent' }).select().single();
             lead = newLead;
@@ -119,8 +131,11 @@ async function orchestrate(msg, isOutreach) {
             const aiMsg = await client.sendMessage(msg.from, decision.reply);
             await supabase.from('messages').insert({ id: aiMsg.id.id, lead_id: lead.id, body: decision.reply, from_me: true });
         }
-    } catch (e) { console.error("❌ Engine Fault", e.message); }
-    setTimeout(() => msgLock.delete(lockKey), 10000);
+    } catch (e) { 
+        console.error("❌ Engine Fault", e.message); 
+    }
+    // Release lock after 10 seconds to allow for retries if necessary
+    setTimeout(() => globalMsgLock.delete(lockKey), 10000);
 }
 
 client.on('message', async (m) => { if (!m.fromMe) await orchestrate(m, false); });
