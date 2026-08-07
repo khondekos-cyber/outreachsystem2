@@ -29,15 +29,14 @@ app.get('/', (req, res) => {
 app.listen(port, '0.0.0.0', () => console.log(`🚀 Port ${port} open.`));
 
 // --- 2. CHROMIUM LOCK FIX ---
-// Specifically targets the location where LocalAuth stores session locks
 const lockPath = path.join(process.cwd(), '.wwebjs_auth', 'session', 'Default', 'SingletonLock');
-if (fs.existsSync(lockPath)) { 
-    try { 
-        fs.unlinkSync(lockPath); 
+if (fs.existsSync(lockPath)) {
+    try {
+        fs.unlinkSync(lockPath);
         console.log("🔓 Unlocked existing session.");
     } catch (e) {
         console.log("⚠️ SingletonLock handled.");
-    } 
+    }
 }
 
 // --- 3. INITIALIZATION ---
@@ -46,15 +45,8 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 // Render-Specific Chrome Path Detection
 const getChromePath = () => {
     if (process.env.RENDER) {
-        // 1. Check for Puppeteer Buildpack path
         if (fs.existsSync('/usr/bin/google-chrome')) return '/usr/bin/google-chrome';
 
-        // 2. Check the REAL default Puppeteer cache dir on Render.
-        // `npx puppeteer browsers install chrome` installs to ~/.cache/puppeteer
-        // which on Render resolves to /opt/render/.cache/puppeteer — NOT a path
-        // relative to process.cwd() (your project folder). We scan for whatever
-        // version actually got installed instead of hardcoding a version string,
-        // so this keeps working even if the Chrome build number changes later.
         const cacheRoot = process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer';
         const chromeDir = path.join(cacheRoot, 'chrome');
         if (fs.existsSync(chromeDir)) {
@@ -65,14 +57,13 @@ const getChromePath = () => {
             }
         }
     }
-    return undefined; // Local fallback
+    return undefined;
 };
 
 const client = new Client({
     authStrategy: new LocalAuth(),
     webVersionCache: {
         type: 'remote',
-        // Direct GitHub link avoids 'webversion' timeout errors on Render
         remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
     },
     puppeteer: {
@@ -110,7 +101,7 @@ async function orchestrate(msg, isOutreach) {
     if (msg.timestamp < bootTime - 60 || msg.from.includes('status') || msg.from.endsWith('@g.us')) return;
 
     const phone = isOutreach ? msg.to : msg.from;
-    const lockKey = `${msg.id.id}`; 
+    const lockKey = `${msg.id.id}`;
     if (globalMsgLock.has(lockKey)) return;
     globalMsgLock.add(lockKey);
 
@@ -151,8 +142,8 @@ async function orchestrate(msg, isOutreach) {
             const aiMsg = await client.sendMessage(msg.from, decision.reply);
             await supabase.from('messages').insert({ id: aiMsg.id.id, lead_id: lead.id, body: decision.reply, from_me: true });
         }
-    } catch (e) { 
-        console.error("❌ Engine Fault", e.message); 
+    } catch (e) {
+        console.error("❌ Engine Fault", e.message);
     }
     setTimeout(() => globalMsgLock.delete(lockKey), 10000);
 }
