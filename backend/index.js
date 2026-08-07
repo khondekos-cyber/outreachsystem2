@@ -48,9 +48,22 @@ const getChromePath = () => {
     if (process.env.RENDER) {
         // 1. Check for Puppeteer Buildpack path
         if (fs.existsSync('/usr/bin/google-chrome')) return '/usr/bin/google-chrome';
-        // 2. Check for manual install path (if using the build command below)
-        const manualPath = path.join(process.cwd(), '.cache/puppeteer/chrome/linux-146.0.7680.31/chrome-linux64/chrome');
-        if (fs.existsSync(manualPath)) return manualPath;
+
+        // 2. Check the REAL default Puppeteer cache dir on Render.
+        // `npx puppeteer browsers install chrome` installs to ~/.cache/puppeteer
+        // which on Render resolves to /opt/render/.cache/puppeteer — NOT a path
+        // relative to process.cwd() (your project folder). We scan for whatever
+        // version actually got installed instead of hardcoding a version string,
+        // so this keeps working even if the Chrome build number changes later.
+        const cacheRoot = process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer';
+        const chromeDir = path.join(cacheRoot, 'chrome');
+        if (fs.existsSync(chromeDir)) {
+            const versions = fs.readdirSync(chromeDir);
+            for (const version of versions) {
+                const candidate = path.join(chromeDir, version, 'chrome-linux64', 'chrome');
+                if (fs.existsSync(candidate)) return candidate;
+            }
+        }
     }
     return undefined; // Local fallback
 };
