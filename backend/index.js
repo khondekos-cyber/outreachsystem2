@@ -1,7 +1,6 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { createClient } = require('@supabase/supabase-js');
-const crypto = require('crypto');
 const path = require('path');
 const express = require('express');
 const fs = require('fs');
@@ -29,31 +28,43 @@ app.get('/', (req, res) => {
 
 app.listen(port, '0.0.0.0', () => console.log(`🚀 Port ${port} open.`));
 
-// --- 2. CHROMIUM LOCK FIX (Optimized for Render Restarts) ---
-const sessionDir = path.join(process.cwd(), '.wwebjs_auth');
-const lockPath = path.join(sessionDir, 'session', 'Default', 'SingletonLock');
+// --- 2. CHROMIUM LOCK FIX ---
+// Specifically targets the location where LocalAuth stores session locks
+const lockPath = path.join(process.cwd(), '.wwebjs_auth', 'session', 'Default', 'SingletonLock');
 if (fs.existsSync(lockPath)) { 
     try { 
         fs.unlinkSync(lockPath); 
+        console.log("🔓 Unlocked existing session.");
     } catch (e) {
-        console.log("🔒 SingletonLock busy or removed.");
+        console.log("⚠️ SingletonLock handled.");
     } 
 }
 
-// --- 3. INITIALIZATION (Optimized for Render Buildpacks) ---
+// --- 3. INITIALIZATION ---
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// Render Optimization: Removed hardcoded chromePath. 
-// Render uses its own Chromium path via the 'Puppeteer Buildpack'.
+// Render-Specific Chrome Path Detection
+const getChromePath = () => {
+    if (process.env.RENDER) {
+        // 1. Check for Puppeteer Buildpack path
+        if (fs.existsSync('/usr/bin/google-chrome')) return '/usr/bin/google-chrome';
+        // 2. Check for manual install path (if using the build command below)
+        const manualPath = path.join(process.cwd(), '.cache/puppeteer/chrome/linux-146.0.7680.31/chrome-linux64/chrome');
+        if (fs.existsSync(manualPath)) return manualPath;
+    }
+    return undefined; // Local fallback
+};
+
 const client = new Client({
     authStrategy: new LocalAuth(),
     webVersionCache: {
         type: 'remote',
-        // Stable GitHub raw link
+        // Direct GitHub link avoids 'webversion' timeout errors on Render
         remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
     },
     puppeteer: {
         headless: true,
+        executablePath: getChromePath(),
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -62,8 +73,6 @@ const client = new Client({
             '--no-zygote',
             '--single-process'
         ],
-        // Critical: Let Render provide the executable path automatically 
-        // to avoid "Executable not found" errors
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
 });
@@ -81,12 +90,10 @@ client.on('ready', () => {
 });
 
 // --- 4. BUSINESS LOGIC ---
-// Moved msgLock to global scope so it actually functions as a lock across messages
 const globalMsgLock = new Set();
 
 async function orchestrate(msg, isOutreach) {
     const bootTime = Math.floor(Date.now() / 1000);
-    // Logic: Skip old messages or statuses/groups
     if (msg.timestamp < bootTime - 60 || msg.from.includes('status') || msg.from.endsWith('@g.us')) return;
 
     const phone = isOutreach ? msg.to : msg.from;
@@ -134,7 +141,6 @@ async function orchestrate(msg, isOutreach) {
     } catch (e) { 
         console.error("❌ Engine Fault", e.message); 
     }
-    // Release lock after 10 seconds to allow for retries if necessary
     setTimeout(() => globalMsgLock.delete(lockKey), 10000);
 }
 
