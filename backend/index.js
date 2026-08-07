@@ -1,5 +1,7 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 10000;
@@ -18,11 +20,36 @@ app.get('/', (req, res) => {
 
 app.listen(port, '0.0.0.0', () => console.log(`🚀 Port ${port} open.`));
 
+// Render-specific Chrome path detection, with built-in debug logging so we
+// can see exactly what it finds (or doesn't) in the deploy logs.
+const getChromePath = () => {
+    const cacheRoot = process.env.PUPPETEER_CACHE_DIR || '/opt/render/.cache/puppeteer';
+    const chromeDir = path.join(cacheRoot, 'chrome');
+    console.log('🔍 Looking for Chrome in:', chromeDir);
+    console.log('🔍 cacheRoot exists:', fs.existsSync(cacheRoot));
+    if (fs.existsSync(cacheRoot)) {
+        console.log('🔍 cacheRoot contents:', fs.readdirSync(cacheRoot));
+    }
+    console.log('🔍 chromeDir exists:', fs.existsSync(chromeDir));
+    if (fs.existsSync(chromeDir)) {
+        const versions = fs.readdirSync(chromeDir);
+        console.log('🔍 chrome versions found:', versions);
+        for (const version of versions) {
+            const candidate = path.join(chromeDir, version, 'chrome-linux64', 'chrome');
+            console.log('🔍 checking:', candidate, fs.existsSync(candidate));
+            if (fs.existsSync(candidate)) return candidate;
+        }
+    }
+    if (fs.existsSync('/usr/bin/google-chrome')) return '/usr/bin/google-chrome';
+    console.log('🔍 No Chrome found anywhere — returning undefined');
+    return undefined;
+};
+
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+        executablePath: getChromePath(),
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
