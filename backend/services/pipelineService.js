@@ -1,30 +1,58 @@
 module.exports = {
+    COLS: [
+        "Outreach Sent",
+        "Follow-Up Due",
+        "Follow-Up Sent",
+        "Replied",
+        "AI Qualifying",
+        "Interested / Demo",
+        "Booked / Won",
+        "Lost / Ghosted"
+    ],
+
     calculateNextStatus: (intent, currentStatus) => {
         const rules = {
-            'BOOKING': 'Interested / Demo',
-            'BOOKING_CONFIRMED': 'Booked / Won',
+            'OUTREACH': 'Outreach Sent',
+            'FOLLOWUP_DRAFTED': 'Follow-Up Due',
+            'AUTO_REPLY_DETECTED': 'Replied',
+            'GREETING': 'Replied',
             'QUESTION': 'AI Qualifying',
             'OBJECTION': 'AI Qualifying',
-            'GREETING': 'Replied',
-            'OUTREACH': 'Outreach Sent',
-            'NEGATIVE': 'Lost / Ghosted'
+            'INTERESTED': 'Interested / Demo',
+            'BOOKING_CONFIRMED': 'Booked / Won',
+            'NEGATIVE': 'Lost / Ghosted',
+            'DECLINED': 'Lost / Ghosted'
         };
 
-        const order = ["Outreach Sent", "Replied", "AI Qualifying", "Interested / Demo", "Booked / Won"];
         const normalizedIntent = String(intent || '').trim().toUpperCase();
 
-        if (normalizedIntent === 'NEGATIVE') return 'Lost / Ghosted';
+        if (normalizedIntent === 'NEGATIVE' || normalizedIntent === 'DECLINED') {
+            return 'Lost / Ghosted';
+        }
+
+        if (currentStatus === 'Lost / Ghosted' || currentStatus === 'Lost / Declined') {
+            return 'Lost / Ghosted';
+        }
 
         const nextStatus = rules[normalizedIntent] || currentStatus;
-
-        if (!rules[normalizedIntent]) {
-            console.warn(`⚠️ pipelineService: unrecognized intent "${intent}" — keeping "${currentStatus}"`);
-        }
+        const order = [
+            "Outreach Sent",
+            "Follow-Up Due",
+            "Follow-Up Sent",
+            "Replied",
+            "AI Qualifying",
+            "Interested / Demo",
+            "Booked / Won"
+        ];
 
         const currentIndex = order.indexOf(currentStatus);
         const nextIndex = order.indexOf(nextStatus);
 
-        // Forward progression only
-        return (nextIndex > currentIndex) ? nextStatus : currentStatus;
+        // If lead was in Follow-Up Due or Follow-Up Sent and replies -> moves to Replied / Qualifying
+        if (currentStatus === 'Follow-Up Due' || currentStatus === 'Follow-Up Sent') {
+            return (nextStatus === 'Replied' || nextStatus === 'AI Qualifying') ? nextStatus : currentStatus;
+        }
+
+        return (nextIndex >= currentIndex) ? nextStatus : currentStatus;
     }
 };
