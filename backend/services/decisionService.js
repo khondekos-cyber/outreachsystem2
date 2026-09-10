@@ -2,37 +2,32 @@ const OpenAI = require('openai');
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 module.exports = {
-    // Generate intelligent, context-aware follow-up drafts based on what you actually sent
+    // Generate 48h / 7d / 14d Follow-Up Drafts tailored to Dog Food & Laundromats
     async generateFollowUp(lead, history = [], stage = '48H_NUDGE', knowledge) {
         const leadStatus = lead.status || 'Outreach Sent';
-        const lastMyMessage = (history || []).filter(m => m.from_me).pop()?.body || "";
+        const isLaundromat = (lead.industry || "").toLowerCase().includes("laundry") || (lead.name || "").toLowerCase().includes("laundromat");
 
         const prompt = `
-You are Alex, an elite South African B2B sales setter writing a natural WhatsApp follow-up.
-LEAD INFO:
-- Name: ${lead.name || "there"}
-- Industry: ${lead.industry || "Home Services"}
-- Location: ${lead.location || "South Africa"}
-- Stalled Pipeline Stage: "${leadStatus}"
+You are Alex, an expert South African B2B setter following up on an outreach message about building functional web apps / online ordering portals.
+LEAD CONTEXT:
+- Business: ${lead.name || "there"}
+- Industry: ${lead.industry || (isLaundromat ? "Laundromat" : "Dog Food Supplier")}
+- Current Status: "${leadStatus}"
 - Follow-Up Step: ${stage} (48H_NUDGE, 7D_ASSET, or 14D_BREAKUP)
-- What I sent previously: "${lastMyMessage}"
+- Demo Link: ${knowledge.demo_asset_url}
 
-CRITICAL RULES:
-- DO NOT say "did you see our quote" or "look at the quote". WE DID NOT SEND A PRICE QUOTE. We are offering an automation system that handles THEIR customer quotes.
-- Maximum 1-2 short sentences. Max 1 emoji. Write like a real South African founder.
+ANGLES:
+1. 48H_NUDGE (Soft bump + value):
+   ${isLaundromat 
+     ? '"Hey ' + (lead.name || '') + '! No pressure at all — just thought an automated booking portal might save you a few missed laundry collection calls during busy days. Mind if I drop a quick 60-sec demo?"'
+     : '"Hey ' + (lead.name || '') + '! No pressure at all — just thought it might save you a few hours of manual WhatsApp order-taking a week. Here is the Klerksdorp Hondekos demo if you want to take a quick look: ' + knowledge.demo_asset_url + '"'
+   }
 
-STAGE ANGLES:
-1. If 48H_NUDGE:
-   - Friendly bump. Assume they were busy on site or with clients.
-   - Example: "Hey ${lead.name || ""}! Just bumping this in case you were busy on site — curious if your team is currently handling all those WhatsApp enquiries manually?"
+2. 7D_ASSET:
+   - "Hey ${lead.name || ""}, put together a 60-second video of how a local ${isLaundromat ? "laundry" : "pet food"} business automated their orders online. Want me to send the walkthrough over?"
 
-2. If 7D_ASSET:
-   - Offer proof/video. 
-   - Example: "Hey ${lead.name || ""}, put together a quick 60-second video of how another ${lead.industry || "trade"} team automated their WhatsApp quote bookings. Mind if I drop the link here?"
-
-3. If 14D_BREAKUP:
-   - Clean closure / loss-aversion.
-   - Example: "Hey ${lead.name || ""}, I'll assume automating your quote responses isn't a priority right now and I'll leave you to it! Feel free to reach out anytime if things change."
+3. 14D_BREAKUP:
+   - "Hey ${lead.name || ""}, I'll assume an online ordering portal isn't a priority for your setup right now and I won't bug you again! Feel free to reach out anytime if you want to see it in action."
 
 Return ONLY valid JSON:
 {
@@ -49,12 +44,14 @@ Return ONLY valid JSON:
             });
             return JSON.parse(completion.choices[0].message.content);
         } catch (e) {
-            console.error("❌ Follow-up generator error:", e.message);
-            return { draft: `Hey ${lead.name || ""}! Just bumping this in case you were busy — curious how your team handles after-hours WhatsApp quotes?`, angle: stage };
+            return { 
+                draft: `Hey ${lead.name || ""}! No pressure — just thought an online ordering portal might save your team time taking manual WhatsApp orders. Here is a quick demo: ${knowledge.demo_asset_url}`, 
+                angle: stage 
+            };
         }
     },
 
-    // Inbound conversation decision brain
+    // Inbound conversation decision brain (Demo-Led Framework)
     async run(lead = {}, history = [], messageText, knowledge, isOutreach = false) {
         const now = new Date();
         const todayLabel = now.toLocaleDateString('en-ZA', { 
@@ -65,17 +62,10 @@ Return ONLY valid JSON:
             timeZone: 'Africa/Johannesburg'
         });
 
-        // Check if demo already happened in the past
-        let isPastDemo = false;
-        if (lead.memory?.meeting_time) {
-            const meetingDate = new Date(lead.memory.meeting_time);
-            if (!isNaN(meetingDate.getTime()) && meetingDate < now) {
-                isPastDemo = true;
-            }
-        }
+        const isAlreadyBooked = lead.status === 'Booked / Won';
 
         const systemPrompt = `
-You are Alex, an elite South African WhatsApp sales setter for an automation agency.
+You are Alex, an elite South African web developer and setter specializing in turning static businesses into functional online ordering and booking web applications.
 TODAY IS: ${todayLabel} (SAST / UTC+2).
 
 KNOWLEDGE BASE:
@@ -83,41 +73,41 @@ ${JSON.stringify(knowledge, null, 2)}
 
 ${isOutreach ? `
 === OUTREACH INGESTION MODE ===
-1. Verify if this message is a personalized cold pitch.
-2. Extract: Lead name, Industry, Location, Social stats.
+1. Verify if this outbound message is a personalized pitch for online ordering / booking web apps.
+2. Extract: Lead name, Industry (Dog Food Supplier or Laundromat), Location, Social stats.
 3. Set intent="OUTREACH".
 ` : `
-=== INBOUND SETTER MODE ===
+=== INBOUND SETTER MODE (DEMO-LED FRAMEWORK) ===
 LEAD CONTEXT:
 - Name: ${lead.name || "Unknown"}
-- Industry: ${lead.industry || "Home Services"}
+- Industry: ${lead.industry || "Dog Food / Laundromat"}
 - Location: ${lead.location || "South Africa"}
 - Current Status: ${lead.status || "Replied"}
-- Memory Facts: ${JSON.stringify(lead.memory || {})}
-- Past Demo Completed: ${isPastDemo ? "YES (Demo already took place in the past. DO NOT re-book or talk about past demo times.)" : "NO"}
+- Memory: ${JSON.stringify(lead.memory || {})}
+- Demo Already Held: ${isAlreadyBooked ? "YES" : "NO"}
 
-CRITICAL RULES (ANTI-HALLUCINATION):
-1. CASUAL BANTER & CATCH-UPS:
-   - If the lead sends casual messages like "hope you are well bro", "how are things", "how's business":
-   - DO NOT set intent="BOOKING_CONFIRMED".
-   - DO NOT say "Looking forward to our demo on Tuesday".
-   - Set intent="GREETING".
-   - Reply warmly in 1 short sentence: "Doing great bro, thanks for asking! How are things on your side?"
+CONVERSATIONAL PROTOCOL:
+1. IF LEAD SAYS "YES / SEND IT / INTERESTED":
+   - Drop the exact demo asset: "${knowledge.demo_asset_url}"
+   - Ask for a quick 10-minute walkthrough call: "Here's a 60-sec look at the Klerksdorp Hondekos setup: ${knowledge.demo_asset_url} — would you have 10 minutes tomorrow around 10:00 AM or 2:00 PM to see how this would look with your brand & pricing?"
+   - Set intent="INTERESTED".
 
-2. PAST DEMOS:
-   - If Past Demo Completed is YES, this person is an existing relationship. Never propose old demo times.
+2. LAUNDROMAT LEAD REPLIES (Testing the pain):
+   - If they say "We take bookings on WhatsApp/Calls":
+   - Reply: "Makes complete sense! We found laundry teams waste 2+ hours a day texting back and forth for pickup times and pricing. Mind if I show you how to automate that with an online booking portal?"
+   - Set intent="QUESTION".
 
-3. AUTO-RESPONDERS:
-   - If lead message is an automated greeting / office hours / price menu:
-   - Set intent="AUTO_REPLY_DETECTED".
-   - Reply: "Hey! Thanks for getting back. Just had a quick question regarding how you handle WhatsApp enquiries when your team is busy on jobs?"
+3. DOG FOOD LEAD REPLIES:
+   - If they explain how they currently sell:
+   - Validate them $\rightarrow$ Share how Klerksdorp Hondekos stopped chasing manual EFT proofs by taking orders on their custom web portal.
+   - Set intent="QUESTION".
 
-4. NEW BOOKINGS:
-   - ONLY set intent="BOOKING_CONFIRMED" if the lead explicitly agreed to a specific upcoming date/time in THIS message.
-   - Resolve to ISO-8601 string in Africa/Johannesburg timezone.
+4. TIME OFFERED / DEMO CONFIRMED:
+   - If they agree to a specific time:
+   - Confirm it warmly $\rightarrow$ Set intent="BOOKING_CONFIRMED" $\rightarrow$ Resolve datetime to ISO-8601 string.
 
 5. HARD DECLINES:
-   - If lead says "No thanks", "Stop", "Not interested":
+   - If lead says "Not interested", "No thanks":
    - Set intent="DECLINED", lead_score=0.
 `}
 
@@ -167,7 +157,7 @@ RESPONSE JSON SCHEMA:
         } catch (e) {
             console.error("❌ Decision service error:", e.message);
             return {
-                reply: "Hey! Thanks for getting back. How are things on your side?",
+                reply: `Hey! Thanks for getting back. Here is a quick look at the custom ordering app: ${knowledge.demo_asset_url} — let me know what you think!`,
                 intent: "GREETING",
                 meeting_datetime_iso: null,
                 extracted_identity: {},
