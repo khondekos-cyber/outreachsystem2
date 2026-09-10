@@ -29,7 +29,7 @@ let sock;
 let currentQrBase64 = null;
 let isConnected = false;
 
-// 60s TTL Message De-duplication Cache
+// 60s Message De-duplication Cache
 const processedMessageIds = new Map();
 function isDuplicateMessage(msgId) {
     if (!msgId) return false;
@@ -42,53 +42,38 @@ function isDuplicateMessage(msgId) {
     return false;
 }
 
-// 🛡️ Bulletproof Lead Matcher (Pure Numeric + Name Recognition)
+// 🛡️ Universal Lead Matcher
 async function findExistingLead(remoteJid, messageBody = "") {
     try {
-        // 1. Extract pure numbers from remoteJid (e.g. "52016734806118" from "52016734806118:2@lid")
         const rawDigits = (remoteJid || "").replace(/[^0-9]/g, "");
         
         if (rawDigits.length >= 7) {
-            const { data: leadsByPhone } = await supabase
+            const { data: byPhone } = await supabase
                 .from('leads')
                 .select('*')
                 .ilike('phone', `%${rawDigits}%`)
                 .limit(1);
 
-            if (leadsByPhone && leadsByPhone.length > 0) {
-                return leadsByPhone[0];
-            }
+            if (byPhone && byPhone.length > 0) return byPhone[0];
         }
 
-        // 2. Direct exact match on remoteJid string
-        const { data: leadsByJid } = await supabase
+        const { data: byJid } = await supabase
             .from('leads')
             .select('*')
             .eq('phone', remoteJid)
             .limit(1);
 
-        if (leadsByJid && leadsByJid.length > 0) {
-            return leadsByJid[0];
-        }
+        if (byJid && byJid.length > 0) return byJid[0];
 
-        // 3. Name Match in Greeting (e.g. "Hey I'Themba Lethu", "Hey CJ Waterproofing")
         if (messageBody && messageBody.length > 4) {
-            const { data: allActiveLeads } = await supabase
-                .from('leads')
-                .select('*')
-                .limit(150);
-
+            const { data: allActiveLeads } = await supabase.from('leads').select('*').limit(150);
             if (allActiveLeads && allActiveLeads.length > 0) {
                 const lowerBody = messageBody.toLowerCase();
                 const matched = allActiveLeads.find(l => 
-                    l.name && 
-                    l.name !== 'New Prospect' && 
+                    l.name && l.name !== 'New Prospect' && 
                     lowerBody.includes(l.name.toLowerCase().trim())
                 );
-                if (matched) {
-                    console.log(`🎯 [NAME MATCH] Message matched lead: "${matched.name}"`);
-                    return matched;
-                }
+                if (matched) return matched;
             }
         }
     } catch (e) {
@@ -98,7 +83,7 @@ async function findExistingLead(remoteJid, messageBody = "") {
 }
 
 // ==========================================
-// BAILEYS WHATSAPP CLIENT
+// BAILEYS WHATSAPP CLIENT (LISTENER ONLY)
 // ==========================================
 async function startWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
@@ -146,7 +131,6 @@ async function startWhatsApp() {
             if (isDuplicateMessage(msg.key.id)) continue;
 
             const remoteJid = msg.key.remoteJid;
-            // Strictly ignore group chats and status broadcasts
             if (!remoteJid || remoteJid.includes('@g.us') || remoteJid.includes('status@broadcast')) continue;
 
             const cleanPhone = remoteJid.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
@@ -159,17 +143,16 @@ async function startWhatsApp() {
             const knowledge = knowledgeService.getKnowledge();
 
             // ========================================================
-            // FLOW 1: OUTBOUND MESSAGES (You texting from your phone)
+            // FLOW 1: OUTBOUND MESSAGES (You sending manually from phone)
             // ========================================================
             if (isOutbound) {
-                // 🚪 DOOR A: Is this an existing lead in the database?
                 const existingLead = await findExistingLead(remoteJid, body);
 
                 if (existingLead) {
-                    // Log message in history
+                    // Log manual outbound message to DB
                     await supabase.from('messages').insert({ lead_id: existingLead.id, body: body, from_me: true });
 
-                    // 🎯 MOVE TO "Follow-Up Sent"
+                    // Clear pending draft since you've just responded
                     const followupStages = ['Follow-Up Due', 'Outreach Sent', 'Follow-Up Sent'];
                     if (followupStages.includes(existingLead.status)) {
                         const newCount = (existingLead.followup_count || 0) + 1;
@@ -181,17 +164,20 @@ async function startWhatsApp() {
                             last_message_at: new Date().toISOString()
                         }).eq('id', existingLead.id);
 
-                        await eventService.log(existingLead.id, 'FOLLOWUP_SENT', `Follow-Up #${newCount} sent to ${existingLead.name}`, { body });
-                        console.log(`🚀 [SUCCESS] ${existingLead.name} moved ➔ "Follow-Up Sent" (Step #${newCount})`);
+                        await eventService.log(existingLead.id, 'FOLLOWUP_SENT', `Manual message sent to ${existingLead.name}`, { body });
+                        console.log(`🚀 [SENT RECORDED] ${existingLead.name} moved ➔ "Follow-Up Sent"`);
                         io.emit('lead_updated', { lead_id: existingLead.id, status: 'Follow-Up Sent' });
                     } else {
-                        await supabase.from('leads').update({ last_message_at: new Date().toISOString() }).eq('id', existingLead.id);
+                        await supabase.from('leads').update({
+                            pending_draft: null,
+                            last_message_at: new Date().toISOString()
+                        }).eq('id', existingLead.id);
                         io.emit('message_received', { lead_id: existingLead.id });
                     }
-                    continue; // 🛑 STRICT STOP: Never check cold pitch analyzer for existing leads!
+                    continue;
                 }
 
-                // 🚪 DOOR B: Brand-new stranger -> Check if this is a fresh cold pitch to ingest
+                // If lead doesn't exist, check if this is initial cold outreach pitch
                 console.log(`🔍 [ANALYZING COLD OUTREACH] "${body}" to ${cleanPhone}`);
                 const decision = await decisionService.run({}, [], body, knowledge, true);
 
@@ -225,7 +211,7 @@ async function startWhatsApp() {
                 }
 
                 await supabase.from('messages').insert({ lead_id: newLead.id, body: body, from_me: true });
-                await eventService.log(newLead.id, 'OUTREACH', `Outreach pitch sent to ${newLead.name}`, { identity: decision.extracted_identity });
+                await eventService.log(newLead.id, 'OUTREACH', `Cold pitch sent to ${newLead.name}`, { identity: decision.extracted_identity });
                 console.log(`✅ [INGESTED LEAD] ${newLead.name} locked into SSOT.`);
 
                 io.emit('lead_updated', { lead_id: newLead.id, status: 'Outreach Sent' });
@@ -233,31 +219,23 @@ async function startWhatsApp() {
             }
 
             // ========================================================
-            // FLOW 2: INBOUND LEAD REPLIES (Lead texting you)
+            // FLOW 2: INBOUND LEAD REPLY (Lead texting you)
             // ========================================================
             try {
                 const lead = await findExistingLead(remoteJid, body);
 
                 if (!lead) {
-                    console.log(`🚫 [IGNORED UNREGISTERED SENDER] ${remoteJid}`);
+                    console.log(`🚫 [IGNORED UNREGISTERED NUMBER] ${remoteJid}`);
                     continue;
                 }
 
                 console.log(`📩 Inbound reply from ${lead.name || lead.phone}: "${body}"`);
 
-                // 1. Log incoming message
+                // 1. Log inbound message
                 await supabase.from('messages').insert({ lead_id: lead.id, body: body, from_me: false });
                 io.emit('message_received', { lead_id: lead.id });
 
-                // 2. 🛑 ABSOLUTE HARD KILL-SWITCH: If Manual Mode, STOP HERE IMMEDIATELY.
-                if (lead.ai_active === false) {
-                    console.log(`🛑 [MANUAL TAKEOVER HARD STOP] AI is OFF for ${lead.name}. No AI call made.`);
-                    await supabase.from('leads').update({ last_message_at: new Date().toISOString() }).eq('id', lead.id);
-                    io.emit('lead_updated', { lead_id: lead.id, manual_attention: true });
-                    continue; // 🛑 Strict Stop
-                }
-
-                // 3. Fetch past 20 messages for AI context
+                // 2. Fetch history for AI Context
                 const { data: history } = await supabase
                     .from('messages')
                     .select('body, from_me, created_at')
@@ -265,7 +243,7 @@ async function startWhatsApp() {
                     .order('created_at', { ascending: true })
                     .limit(20);
 
-                // 4. Run Decision Engine
+                // 3. Trigger Decision Brain to prepare the response & update facts
                 const decision = await decisionService.run(lead, history || [], body, knowledge, false);
                 const nextStatus = pipelineService.calculateNextStatus(decision.intent, lead.status || 'Replied');
 
@@ -283,6 +261,7 @@ async function startWhatsApp() {
                 }
                 if (decision.meeting_datetime_iso) memoryObj.meeting_time = decision.meeting_datetime_iso;
 
+                // 4. 🧠 SAVE PREPARED DRAFT IN DATABASE (NO AUTO-SENDING!)
                 await supabase.from('leads').update({
                     name: (decision.extracted_identity?.name && decision.extracted_identity.name !== "New Prospect") ? decision.extracted_identity.name : lead.name,
                     industry: decision.extracted_identity?.industry || lead.industry,
@@ -294,7 +273,8 @@ async function startWhatsApp() {
                     lead_score: decision.lead_score ?? lead.lead_score,
                     pain_points: decision.pain_points || lead.pain_points,
                     sales_process: decision.new_facts?.sales_process || lead.sales_process,
-                    pending_draft: null,
+                    pending_draft: decision.reply, // 🌟 PREPARED DRAFT READY FOR YOU TO COPY
+                    draft_stage: decision.intent,
                     last_message_at: new Date().toISOString()
                 }).eq('id', lead.id);
 
@@ -307,16 +287,12 @@ async function startWhatsApp() {
                     }
                 }
 
-                await eventService.log(lead.id, decision.intent, `Moved [${lead.status}] ➔ [${nextStatus}]`, { intent: decision.intent, facts: decision.new_facts });
+                await eventService.log(lead.id, decision.intent, `Pipeline moved ➔ [${nextStatus}] (Draft prepared: ${decision.intent})`, { intent: decision.intent, facts: decision.new_facts });
+                console.log(`📝 [AI COPILOT DRAFT PREPARED] For ${lead.name}: "${decision.reply}"`);
 
-                // Send WhatsApp Reply via Baileys
-                if (decision.reply && decision.reply !== "None" && decision.reply.trim() !== "") {
-                    await new Promise(r => setTimeout(r, 1200));
-                    await sock.sendMessage(remoteJid, { text: decision.reply });
-                    await supabase.from('messages').insert({ lead_id: lead.id, body: decision.reply, from_me: true });
-                }
-
+                // Emit realtime update to UI so the draft shows up instantly on your screen!
                 io.emit('lead_updated', { lead_id: lead.id, status: nextStatus, lead_score: decision.lead_score });
+
             } catch (err) {
                 console.error('❌ Inbound pipeline error:', err);
             }
@@ -328,7 +304,7 @@ async function startWhatsApp() {
 // 48H ➔ 7D ➔ 14D FOLLOW-UP SWEEP ENGINE
 // =========================================================================
 async function runFollowUpSweep() {
-    console.log('🔄 [SWEEP] Evaluating 48h / 7d / 14d follow-up cadence...');
+    console.log('🔄 [SWEEP] Evaluating 48h / 7d / 14d follow-up drafts...');
     const now = Date.now();
     const knowledge = knowledgeService.getKnowledge();
 
@@ -346,14 +322,14 @@ async function runFollowUpSweep() {
         const lastMsgTime = new Date(lead.last_message_at || lead.created_at).getTime();
         let diffHours = (now - lastMsgTime) / (1000 * 60 * 60);
 
-        if (diffHours < 0 || isNaN(diffHours)) diffHours = 72; // Year 2026 test-data fallback
+        if (diffHours < 0 || isNaN(diffHours)) diffHours = 72;
 
         const count = lead.followup_count || 0;
 
         let targetStage = null;
         if (count === 0 && diffHours >= 48) targetStage = '48H_NUDGE';
-        else if (count === 1 && diffHours >= 168) targetStage = '7D_ASSET';   // 7 days = 168 hours
-        else if (count === 2 && diffHours >= 336) targetStage = '14D_BREAKUP'; // 14 days = 336 hours
+        else if (count === 1 && diffHours >= 168) targetStage = '7D_ASSET';
+        else if (count === 2 && diffHours >= 336) targetStage = '14D_BREAKUP';
         else if (count >= 3 && diffHours >= 336) {
             await supabase.from('leads').update({ status: 'Lost / Ghosted', ai_active: false }).eq('id', lead.id);
             io.emit('lead_updated', { lead_id: lead.id, status: 'Lost / Ghosted' });
@@ -407,30 +383,11 @@ app.post('/api/mark-followup-sent', async (req, res) => {
             last_message_at: new Date().toISOString()
         }).eq('id', leadId);
 
-        await eventService.log(lead.id, 'FOLLOWUP_SENT', `Follow-Up #${newCount} marked as sent for ${lead.name}`);
+        await eventService.log(lead.id, 'FOLLOWUP_SENT', `Manual Follow-Up #${newCount} sent to ${lead.name}`);
         io.emit('lead_updated', { lead_id: leadId, status: 'Follow-Up Sent' });
         res.json({ success: true, followup_count: newCount });
     } catch (e) {
         res.status(500).json({ error: e.message });
-    }
-});
-
-app.post('/api/send-message', async (req, res) => {
-    const { leadId, body } = req.body;
-    if (!leadId || !body || !sock) return res.status(400).json({ error: 'WhatsApp not connected' });
-
-    try {
-        const { data: lead } = await supabase.from('leads').select('phone').eq('id', leadId).single();
-        if (!lead) return res.status(404).json({ error: 'Lead not found' });
-
-        await sock.sendMessage(lead.phone, { text: body });
-        await supabase.from('messages').insert({ lead_id: leadId, body, from_me: true });
-        await supabase.from('leads').update({ last_message_at: new Date().toISOString() }).eq('id', leadId);
-
-        io.emit('message_received', { lead_id: leadId });
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
     }
 });
 
