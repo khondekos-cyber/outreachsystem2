@@ -3,26 +3,25 @@ module.exports = {
         return {
             company: "Your Agency Name",
             service: "Custom Functional Web Applications & Online Ordering/Booking Portals",
-            core_offer: "Transforming static social pages and manual WhatsApp ordering into clean, custom web applications where customers order/book and pay online.",
+            core_offer: "Transforming static social pages into high-converting web applications where customers book, order, and pay online.",
             
-            // 🌟 PROOF ASSET (Replace with your actual Loom or live demo link)
-            demo_asset_url: "https://klerksdorp-hondekos-demo.co.za", // Put your live link or Loom video URL here
-            
-            niches: {
-                "Dog Food / Pet Nutrition": {
-                    angle: "Online ordering & payment portal for pet food suppliers and breeders.",
-                    case_study: "We built an online store for Klerksdorp Hondekos where customers choose bag sizes, pay online, and the owner fulfills it with zero WhatsApp back-and-forth.",
-                    pain_point: "Lost time manually texting bank details, confirming EFT proof, and taking repetitive orders on WhatsApp."
+            // 🌟 LIVE PROOF ASSETS
+            demos: {
+                dog_food: {
+                    name: "Klerksdorp Hondekos",
+                    url: "https://klerksdorp-hondekos-demo.co.za", // Paste your Hondekos link here
+                    description: "Online store where customers select bag sizes, pay online, and orders land ready for fulfillment."
                 },
-                "Laundromats / Dry Cleaning": {
-                    angle: "Automated drop-off, collection, and weight-based booking system.",
-                    case_study: "Customers book their wash/fold slots online, pick collection dates, and get automated order updates.",
-                    pain_point: "Staff stuck answering repetitive pricing and collection queries over the phone while washing."
+                laundromat: {
+                    name: "Kusile Laundry Mate (Fairland Randburg)",
+                    // Paste your live Kusile app URL from the screenshot here:
+                    url: "https://aistudio.google.com/apps/7c7d32f3-9823-44db-9f16-eb0c3780e4e8?showPreview=true&showAssistant=true&fullscreenApplet=true",
+                    description: "Quick 60-second booking portal where customers select wash/ironing services, choose collection slots, and schedule doorstep pickups."
                 }
             },
 
-            pricing_model: "Custom one-time build fee + optional monthly hosting and support.",
-            call_to_action: "Would you like me to drop a quick 60-second walkthrough of how Klerksdorp Hondekos's store works so you can see if it fits your setup?"
+            pricing_model: "Custom build fee + optional monthly hosting and support.",
+            call_to_action: "Would you like me to send a 60-second look at the live setup so you can see how it works for your area?"
         };
     }
 };
